@@ -67,10 +67,8 @@ delete(_Ref) ->
 %% of length `4 * Dim' (binary support lands in a later release).
 %%
 %% Returns `ok' on success, or `{error, {dim_mismatch, Expected, Got}}'.
-add(Ref, Id, Vec) when is_list(Vec) ->
-    kvex_nif:add_vec(Ref, Id, Vec);
-add(_Ref, _Id, Vec) when is_binary(Vec) ->
-    {error, binary_input_not_yet_supported}.
+add(Ref, Id, Vec) when is_list(Vec); is_binary(Vec) ->
+    kvex_nif:add_vec(Ref, Id, Vec).
 
 -spec add_batch(index(), [{id(), vector()}]) -> ok | {error, term()}.
 %% @doc Inserts a list of `{Id, Vector}' pairs atomically.
@@ -97,5 +95,6 @@ add_batch(Ref, Pairs) when is_list(Pairs) ->
 %%
 %% Errors: `{error, empty_index}' if the index has no vectors,
 %% `{error, {dim_mismatch, Expected, Got}}' on size mismatch.
-search(Ref, Query, K) when is_list(Query), is_integer(K), K > 0 ->
+search(Ref, Query, K) when (is_list(Query) orelse is_binary(Query)),
+                           is_integer(K), K > 0 ->
     kvex_nif:search_vec(Ref, Query, K).

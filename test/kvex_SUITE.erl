@@ -18,7 +18,8 @@ all() ->
         add_single_self_retrieval,
         search_topk_order,
         large_k_clamped,
-        add_batch_then_search
+        add_batch_then_search,
+        binary_vector_input
     ].
 
 version_is_binary(_Cfg) ->
@@ -103,3 +104,13 @@ add_batch_then_search(_Cfg) ->
         true = Id >= 1 andalso Id =< 1000,
         true = is_float(Score)
     end, Top10).
+
+binary_vector_input(_Cfg) ->
+    {ok, Ix} = kvex:new(128),
+    VList = [rand:uniform() || _ <- lists:seq(1, 128)],
+    VBin  = << <<X:32/float-little>> || X <- VList >>,
+    ok = kvex:add(Ix, 1, VList),
+    ok = kvex:add(Ix, 2, VBin),
+    2  = kvex:size(Ix),
+    {ok, [{Top1, _} | _]} = kvex:search(Ix, VBin, 2),
+    true = (Top1 =:= 1 orelse Top1 =:= 2).

@@ -32,6 +32,30 @@ impl<'a> Decoder<'a> for Id {
     }
 }
 
+/// Wrapper accepted as either a list of floats or a little-endian f32
+/// binary. Always materialises to `Vec<f32>`.
+pub struct VecF32(pub Vec<f32>);
+
+impl<'a> Decoder<'a> for VecF32 {
+    fn decode(term: Term<'a>) -> NifResult<Self> {
+        if let Ok(v) = term.decode::<Vec<f32>>() {
+            return Ok(VecF32(v));
+        }
+        if let Ok(b) = term.decode::<Binary>() {
+            let bytes = b.as_slice();
+            if bytes.len() % 4 != 0 {
+                return Err(NifError::BadArg);
+            }
+            let mut out = Vec::with_capacity(bytes.len() / 4);
+            for chunk in bytes.chunks_exact(4) {
+                out.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+            }
+            return Ok(VecF32(out));
+        }
+        Err(NifError::BadArg)
+    }
+}
+
 pub struct KvexIndex {
     pub dim: usize,
     pub bits: usize,
@@ -74,8 +98,9 @@ fn add_vec<'a>(
     env: Env<'a>,
     resource: ResourceArc<IndexResource>,
     id: Id,
-    vector: Vec<f32>,
+    vector: VecF32,
 ) -> Term<'a> {
+    let vector = vector.0;
     let mut guard = resource.0.write().unwrap();
     if vector.len() != guard.dim {
         return (
@@ -93,9 +118,10 @@ fn add_vec<'a>(
 fn search_vec<'a>(
     env: Env<'a>,
     resource: ResourceArc<IndexResource>,
-    query: Vec<f32>,
+    query: VecF32,
     k: usize,
 ) -> Term<'a> {
+    let query = query.0;
     let guard = resource.0.read().unwrap();
     if guard.inner.len() == 0 {
         return (atoms::error(), atoms::empty_index()).encode(env);
@@ -135,21 +161,21 @@ fn search_vec<'a>(
 fn add_batch<'a>(
     env: Env<'a>,
     resource: ResourceArc<IndexResource>,
-    pairs: Vec<(Id, Vec<f32>)>,
+    pairs: Vec<(Id, VecF32)>,
 ) -> Term<'a> {
     let mut guard = resource.0.write().unwrap();
     for (i, (_id, v)) in pairs.iter().enumerate() {
-        if v.len() != guard.dim {
+        if v.0.len() != guard.dim {
             return (
                 atoms::error(),
-                (atoms::dim_mismatch(), i, guard.dim, v.len()),
+                (atoms::dim_mismatch(), i, guard.dim, v.0.len()),
             )
                 .encode(env);
         }
     }
     let mut flat = Vec::with_capacity(pairs.len() * guard.dim);
     for (_id, v) in &pairs {
-        flat.extend_from_slice(v);
+        flat.extend_from_slice(&v.0);
     }
     guard.inner.add(&flat);
     for (id, _) in pairs.into_iter() {
