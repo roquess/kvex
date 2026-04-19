@@ -5,7 +5,7 @@
 %%% @end
 -module(kvex_nif).
 
--export([hello/0]).
+-export([new_index/2, size/1]).
 
 -on_load(init/0).
 
@@ -25,5 +25,8 @@ init() ->
     SoName = filename:join([PrivDir, "crates", ?LIBNAME, ?LIBNAME]),
     erlang:load_nif(SoName, 0).
 
-hello() ->
+new_index(_Dim, _Bits) ->
+    erlang:nif_error(nif_not_loaded).
+
+size(_Ref) ->
     erlang:nif_error(nif_not_loaded).
