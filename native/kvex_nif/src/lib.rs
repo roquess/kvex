@@ -11,6 +11,7 @@ mod atoms {
         bad_option,
         bits,
         dim_mismatch,
+        empty_index,
     }
 }
 
@@ -88,4 +89,50 @@ fn add_vec<'a>(
     atoms::ok().encode(env)
 }
 
-rustler::init!("kvex_nif", [new_index, size, add_vec], load = load);
+#[rustler::nif(schedule = "DirtyCpu")]
+fn search_vec<'a>(
+    env: Env<'a>,
+    resource: ResourceArc<IndexResource>,
+    query: Vec<f32>,
+    k: usize,
+) -> Term<'a> {
+    let guard = resource.0.read().unwrap();
+    if guard.inner.len() == 0 {
+        return (atoms::error(), atoms::empty_index()).encode(env);
+    }
+    if query.len() != guard.dim {
+        return (
+            atoms::error(),
+            (atoms::dim_mismatch(), guard.dim, query.len()),
+        )
+            .encode(env);
+    }
+    let results = guard.inner.search(&query, k);
+    let indices = results.indices_for_query(0);
+    let scores = results.scores_for_query(0);
+    let mut out: Vec<(Term<'a>, f32)> = Vec::with_capacity(results.k);
+    for (pos, &ix) in indices.iter().enumerate() {
+        let id_term = match &guard.ids[ix as usize] {
+            Id::Int(n) => n.encode(env),
+            Id::Bin(b) => {
+                let mut owned = rustler::types::binary::OwnedBinary::new(b.len())
+                    .expect("oom allocating binary");
+                owned.as_mut_slice().copy_from_slice(b);
+                owned.release(env).to_term(env)
+            }
+        };
+        out.push((id_term, scores[pos]));
+    }
+    out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let list: Vec<Term<'a>> = out
+        .into_iter()
+        .map(|(id, s)| (id, s).encode(env))
+        .collect();
+    (atoms::ok(), list).encode(env)
+}
+
+rustler::init!(
+    "kvex_nif",
+    [new_index, size, add_vec, search_vec],
+    load = load
+);

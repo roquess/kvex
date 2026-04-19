@@ -14,7 +14,7 @@
 %%% @end
 -module(kvex).
 
--export([version/0, new/1, new/2, delete/1, size/1, add/3]).
+-export([version/0, new/1, new/2, delete/1, size/1, add/3, search/3]).
 
 -type index()  :: reference().
 -type opts()   :: #{bits => 2 | 3 | 4}.
@@ -71,3 +71,19 @@ add(Ref, Id, Vec) when is_list(Vec) ->
     kvex_nif:add_vec(Ref, Id, Vec);
 add(_Ref, _Id, Vec) when is_binary(Vec) ->
     {error, binary_input_not_yet_supported}.
+
+-spec search(index(), Query :: vector(), K :: pos_integer()) ->
+        {ok, [{id(), Score :: float()}]} | {error, term()}.
+%% @doc Returns up to `K' most-similar vectors to `Query', sorted
+%% descending by score (higher = more similar).
+%%
+%% Scores are raw TurboQuant similarity scores — monotone with inner
+%% product on the rotated / quantized representation. They are
+%% comparable within a single index but not calibrated to any specific
+%% metric. To get cosine similarity, L2-normalize vectors before `add'
+%% and before `search'.
+%%
+%% Errors: `{error, empty_index}' if the index has no vectors,
+%% `{error, {dim_mismatch, Expected, Got}}' on size mismatch.
+search(Ref, Query, K) when is_list(Query), is_integer(K), K > 0 ->
+    kvex_nif:search_vec(Ref, Query, K).

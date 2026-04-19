@@ -5,7 +5,7 @@
 %%% @end
 -module(kvex_nif).
 
--export([new_index/2, size/1, add_vec/3]).
+-export([new_index/2, size/1, add_vec/3, search_vec/3]).
 
 -on_load(init/0).
 
@@ -32,4 +32,7 @@ size(_Ref) ->
     erlang:nif_error(nif_not_loaded).
 
 add_vec(_Ref, _Id, _Vec) ->
+    erlang:nif_error(nif_not_loaded).
+
+search_vec(_Ref, _Query, _K) ->
     erlang:nif_error(nif_not_loaded).

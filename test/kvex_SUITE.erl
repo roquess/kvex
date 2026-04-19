@@ -13,7 +13,11 @@ all() ->
         bad_bits_rejected,
         size_of_empty,
         add_single_increments_size,
-        dim_mismatch
+        dim_mismatch,
+        empty_index_search,
+        add_single_self_retrieval,
+        search_topk_order,
+        large_k_clamped
     ].
 
 version_is_binary(_Cfg) ->
@@ -48,3 +52,36 @@ dim_mismatch(_Cfg) ->
     {ok, Ix} = kvex:new(128),
     Short   = [0.0 || _ <- lists:seq(1, 64)],
     {error, {dim_mismatch, 128, 64}} = kvex:add(Ix, 1, Short).
+
+empty_index_search(_Cfg) ->
+    {ok, Ix} = kvex:new(128),
+    Q = [0.0 || _ <- lists:seq(1, 128)],
+    {error, empty_index} = kvex:search(Ix, Q, 5).
+
+add_single_self_retrieval(_Cfg) ->
+    {ok, Ix} = kvex:new(128),
+    V = [rand:uniform() || _ <- lists:seq(1, 128)],
+    ok = kvex:add(Ix, 7, V),
+    {ok, [{7, _Score}]} = kvex:search(Ix, V, 1).
+
+search_topk_order(_Cfg) ->
+    {ok, Ix} = kvex:new(64),
+    lists:foreach(fun(I) ->
+        V = [rand:uniform() || _ <- lists:seq(1, 64)],
+        ok = kvex:add(Ix, I, V)
+    end, lists:seq(1, 50)),
+    Q = [rand:uniform() || _ <- lists:seq(1, 64)],
+    {ok, Results} = kvex:search(Ix, Q, 10),
+    10 = length(Results),
+    Scores = [S || {_Id, S} <- Results],
+    Scores = lists:reverse(lists:sort(Scores)).
+
+large_k_clamped(_Cfg) ->
+    {ok, Ix} = kvex:new(64),
+    lists:foreach(fun(I) ->
+        V = [rand:uniform() || _ <- lists:seq(1, 64)],
+        ok = kvex:add(Ix, I, V)
+    end, lists:seq(1, 5)),
+    Q = [rand:uniform() || _ <- lists:seq(1, 64)],
+    {ok, Results} = kvex:search(Ix, Q, 100),
+    5 = length(Results).
