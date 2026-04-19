@@ -14,12 +14,14 @@
 %%% @end
 -module(kvex).
 
--export([version/0, new/1, new/2, delete/1, size/1]).
+-export([version/0, new/1, new/2, delete/1, size/1, add/3]).
 
--type index() :: reference().
--type opts()  :: #{bits => 2 | 3 | 4}.
+-type index()  :: reference().
+-type opts()   :: #{bits => 2 | 3 | 4}.
+-type id()     :: non_neg_integer() | binary().
+-type vector() :: [float()] | binary().
 
--export_type([index/0, opts/0]).
+-export_type([index/0, opts/0, id/0, vector/0]).
 
 -define(DEFAULT_BITS, 4).
 
@@ -56,3 +58,16 @@ size(Ref) ->
 %% native memory release.
 delete(_Ref) ->
     ok.
+
+-spec add(index(), id(), vector()) -> ok | {error, term()}.
+%% @doc Inserts a single vector under the given id.
+%%
+%% Ids may be non-negative integers or binaries (e.g. UUIDs). Vectors
+%% may be passed as a list of floats or as a little-endian f32 binary
+%% of length `4 * Dim' (binary support lands in a later release).
+%%
+%% Returns `ok' on success, or `{error, {dim_mismatch, Expected, Got}}'.
+add(Ref, Id, Vec) when is_list(Vec) ->
+    kvex_nif:add_vec(Ref, Id, Vec);
+add(_Ref, _Id, Vec) when is_binary(Vec) ->
+    {error, binary_input_not_yet_supported}.

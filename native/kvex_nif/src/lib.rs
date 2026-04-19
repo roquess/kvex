@@ -1,4 +1,5 @@
-use rustler::{Encoder, Env, ResourceArc, Term};
+use rustler::types::binary::Binary;
+use rustler::{Decoder, Encoder, Env, Error as NifError, NifResult, ResourceArc, Term};
 use std::sync::RwLock;
 use turbovec::TurboQuantIndex;
 
@@ -9,12 +10,25 @@ mod atoms {
         bad_dim,
         bad_option,
         bits,
+        dim_mismatch,
     }
 }
 
 pub enum Id {
     Int(u64),
     Bin(Vec<u8>),
+}
+
+impl<'a> Decoder<'a> for Id {
+    fn decode(term: Term<'a>) -> NifResult<Self> {
+        if let Ok(n) = term.decode::<u64>() {
+            return Ok(Id::Int(n));
+        }
+        if let Ok(b) = term.decode::<Binary>() {
+            return Ok(Id::Bin(b.as_slice().to_vec()));
+        }
+        Err(NifError::BadArg)
+    }
 }
 
 pub struct KvexIndex {
@@ -54,4 +68,24 @@ fn size(resource: ResourceArc<IndexResource>) -> usize {
     resource.0.read().unwrap().inner.len()
 }
 
-rustler::init!("kvex_nif", [new_index, size], load = load);
+#[rustler::nif]
+fn add_vec<'a>(
+    env: Env<'a>,
+    resource: ResourceArc<IndexResource>,
+    id: Id,
+    vector: Vec<f32>,
+) -> Term<'a> {
+    let mut guard = resource.0.write().unwrap();
+    if vector.len() != guard.dim {
+        return (
+            atoms::error(),
+            (atoms::dim_mismatch(), guard.dim, vector.len()),
+        )
+            .encode(env);
+    }
+    guard.inner.add(&vector);
+    guard.ids.push(id);
+    atoms::ok().encode(env)
+}
+
+rustler::init!("kvex_nif", [new_index, size, add_vec], load = load);
