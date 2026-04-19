@@ -1,0 +1,13 @@
+_build/
+doc/
+ebin/
+.rebar3/
+native/**/target/
+.claude/
+docs/
+*.beam
+crash.dump
+erl_crash.dump
+*.so
+*.dll
+*.dylib
