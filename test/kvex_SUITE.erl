@@ -17,7 +17,8 @@ all() ->
         empty_index_search,
         add_single_self_retrieval,
         search_topk_order,
-        large_k_clamped
+        large_k_clamped,
+        add_batch_then_search
     ].
 
 version_is_binary(_Cfg) ->
@@ -85,3 +86,20 @@ large_k_clamped(_Cfg) ->
     Q = [rand:uniform() || _ <- lists:seq(1, 64)],
     {ok, Results} = kvex:search(Ix, Q, 100),
     5 = length(Results).
+
+add_batch_then_search(_Cfg) ->
+    {ok, Ix} = kvex:new(128),
+    Batch = [
+        {I, [rand:uniform() || _ <- lists:seq(1, 128)]}
+        || I <- lists:seq(1, 1000)
+    ],
+    ok = kvex:add_batch(Ix, Batch),
+    1000 = kvex:size(Ix),
+    Q = [rand:uniform() || _ <- lists:seq(1, 128)],
+    {ok, Top10} = kvex:search(Ix, Q, 10),
+    10 = length(Top10),
+    lists:foreach(fun({Id, Score}) ->
+        true = is_integer(Id),
+        true = Id >= 1 andalso Id =< 1000,
+        true = is_float(Score)
+    end, Top10).

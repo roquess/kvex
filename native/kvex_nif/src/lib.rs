@@ -131,8 +131,35 @@ fn search_vec<'a>(
     (atoms::ok(), list).encode(env)
 }
 
+#[rustler::nif(schedule = "DirtyCpu")]
+fn add_batch<'a>(
+    env: Env<'a>,
+    resource: ResourceArc<IndexResource>,
+    pairs: Vec<(Id, Vec<f32>)>,
+) -> Term<'a> {
+    let mut guard = resource.0.write().unwrap();
+    for (i, (_id, v)) in pairs.iter().enumerate() {
+        if v.len() != guard.dim {
+            return (
+                atoms::error(),
+                (atoms::dim_mismatch(), i, guard.dim, v.len()),
+            )
+                .encode(env);
+        }
+    }
+    let mut flat = Vec::with_capacity(pairs.len() * guard.dim);
+    for (_id, v) in &pairs {
+        flat.extend_from_slice(v);
+    }
+    guard.inner.add(&flat);
+    for (id, _) in pairs.into_iter() {
+        guard.ids.push(id);
+    }
+    atoms::ok().encode(env)
+}
+
 rustler::init!(
     "kvex_nif",
-    [new_index, size, add_vec, search_vec],
+    [new_index, size, add_vec, search_vec, add_batch],
     load = load
 );

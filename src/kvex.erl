@@ -14,7 +14,7 @@
 %%% @end
 -module(kvex).
 
--export([version/0, new/1, new/2, delete/1, size/1, add/3, search/3]).
+-export([version/0, new/1, new/2, delete/1, size/1, add/3, add_batch/2, search/3]).
 
 -type index()  :: reference().
 -type opts()   :: #{bits => 2 | 3 | 4}.
@@ -71,6 +71,18 @@ add(Ref, Id, Vec) when is_list(Vec) ->
     kvex_nif:add_vec(Ref, Id, Vec);
 add(_Ref, _Id, Vec) when is_binary(Vec) ->
     {error, binary_input_not_yet_supported}.
+
+-spec add_batch(index(), [{id(), vector()}]) -> ok | {error, term()}.
+%% @doc Inserts a list of `{Id, Vector}' pairs atomically.
+%%
+%% If any vector has the wrong dimension the whole batch is rejected
+%% with `{error, {dim_mismatch, Position, Expected, Got}}' where
+%% `Position' is the 0-based index of the offending entry.
+%%
+%% Runs on a dirty CPU scheduler — safe to call with large batches
+%% without blocking a BEAM scheduler thread.
+add_batch(Ref, Pairs) when is_list(Pairs) ->
+    kvex_nif:add_batch(Ref, Pairs).
 
 -spec search(index(), Query :: vector(), K :: pos_integer()) ->
         {ok, [{id(), Score :: float()}]} | {error, term()}.
