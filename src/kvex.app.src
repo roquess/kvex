@@ -1,0 +1,13 @@
+{application, kvex, [
+    {description, "Approximate k-NN vector search with TurboQuant compression"},
+    {vsn, "0.1.0"},
+    {registered, [kvex_sup]},
+    {mod, {kvex_app, []}},
+    {applications, [kernel, stdlib]},
+    {env, []},
+    {modules, []},
+
+    {licenses, ["Apache-2.0"]},
+    {links, [{"GitHub", "https://github.com/steveroques/kvex"}]},
+    {maintainers, ["Steve Roques <steve@roques.me>"]}
+]}.
