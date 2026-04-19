@@ -8,6 +8,14 @@ docs/
 *.beam
 crash.dump
 erl_crash.dump
+*.crashdump
+rebar3.crashdump
 *.so
 *.dll
+*.dll.exp
+*.dll.lib
 *.dylib
+*.pdb
+priv/
+src/cargo.hrl
+NOTES.md

@@ -1,0 +1,18 @@
+[package]
+name    = "kvex_nif"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["Steve Roques <steve@roques.me>"]
+
+[lib]
+name       = "kvex_nif"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler  = "0.32"
+turbovec = { git = "https://github.com/RyanCodrai/turbovec", branch = "main" }
+
+[profile.release]
+opt-level = 3
+lto       = "thin"
