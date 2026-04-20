@@ -19,7 +19,9 @@ all() ->
         search_topk_order,
         large_k_clamped,
         add_batch_then_search,
-        binary_vector_input
+        binary_vector_input,
+        concurrent_search,
+        gc_releases_native
     ].
 
 version_is_binary(_Cfg) ->
@@ -114,3 +116,35 @@ binary_vector_input(_Cfg) ->
     2  = kvex:size(Ix),
     {ok, [{Top1, _} | _]} = kvex:search(Ix, VBin, 2),
     true = (Top1 =:= 1 orelse Top1 =:= 2).
+
+concurrent_search(_Cfg) ->
+    {ok, Ix} = kvex:new(128),
+    Pairs = [{I, [rand:uniform() || _ <- lists:seq(1, 128)]}
+             || I <- lists:seq(1, 500)],
+    ok = kvex:add_batch(Ix, Pairs),
+    Q = [rand:uniform() || _ <- lists:seq(1, 128)],
+    {ok, Expected} = kvex:search(Ix, Q, 10),
+    Parent = self(),
+    Pids = [spawn(fun() ->
+        {ok, R} = kvex:search(Ix, Q, 10),
+        Parent ! {self(), R}
+    end) || _ <- lists:seq(1, 20)],
+    Results = [receive {P, R} -> R end || P <- Pids],
+    lists:foreach(fun(R) -> Expected = R end, Results).
+
+gc_releases_native(_Cfg) ->
+    Before = erlang:memory(binary),
+    Pid = spawn(fun() ->
+        {ok, Ix} = kvex:new(512),
+        Pairs = [{I, [rand:uniform() || _ <- lists:seq(1, 512)]}
+                 || I <- lists:seq(1, 10000)],
+        ok = kvex:add_batch(Ix, Pairs),
+        receive done -> ok end
+    end),
+    MRef = erlang:monitor(process, Pid),
+    Pid ! done,
+    receive {'DOWN', MRef, process, Pid, _} -> ok end,
+    [erlang:garbage_collect(P) || P <- erlang:processes()],
+    After = erlang:memory(binary),
+    Delta = After - Before,
+    true = Delta =< 4 * 1024 * 1024.
