@@ -1,5 +1,6 @@
 _build/
-doc/
+doc/*
+!doc/overview.edoc
 ebin/
 .rebar3/
 native/**/target/

@@ -1,0 +1,14 @@
+@author Steve Roques <steve@roques.me>
+@copyright 2026 Steve Roques
+@version 0.1.0
+@title kvex — approximate k-NN vector search on the BEAM
+@doc
+
+kvex provides an Erlang/OTP interface to the TurboQuant algorithm
+(Google Research, ICLR 2026) for approximate k-nearest-neighbour
+vector search. Vectors are compressed to 2–4 bits per coordinate
+without any training phase, and search runs on SIMD kernels through a
+`rustler' NIF over the `turbovec' Rust crate.
+
+See the {@link kvex} module for the full public API.
+
