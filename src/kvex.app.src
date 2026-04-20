@@ -9,5 +9,20 @@
 
     {licenses, ["Apache-2.0"]},
     {links, [{"GitHub", "https://github.com/roquess/kvex"}]},
-    {maintainers, ["Steve Roques <steve@roques.me>"]}
+    {maintainers, ["Steve Roques <steve@roques.me>"]},
+
+    {files, [
+        "src/kvex.erl",
+        "src/kvex_app.erl",
+        "src/kvex_sup.erl",
+        "src/kvex_nif.erl",
+        "src/kvex.app.src",
+        "native/kvex_nif/Cargo.toml",
+        "native/kvex_nif/Cargo.lock",
+        "native/kvex_nif/src",
+        "rebar.config",
+        "LICENSE",
+        "README.md",
+        "CHANGELOG.md"
+    ]}
 ]}.
