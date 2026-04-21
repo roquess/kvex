@@ -1,6 +1,6 @@
 _build/
-doc/*
-!doc/overview.edoc
+doc/
+rebar.lock
 ebin/
 .rebar3/
 native/**/target/
