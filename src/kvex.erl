@@ -24,7 +24,8 @@
 
 -export([version/0, new/1, new/2, delete/1, size/1,
          add/3, add_batch/2, search/3,
-         normalize/1, cosine_search/3]).
+         normalize/1, cosine_search/3,
+         dump/2, load/1]).
 
 -define(OVERSAMPLE, 10).
 
@@ -43,7 +44,7 @@
 %%%===================================================================
 
 -spec version() -> binary().
-version() -> <<"0.2.0">>.
+version() -> <<"0.2.1">>.
 
 -spec new(Dim :: pos_integer()) -> {ok, index()} | {error, term()}.
 new(Dim) -> new(Dim, #{}).
@@ -128,6 +129,43 @@ cosine_search(Ix, Query, K) when is_list(Query), is_integer(K), K > 0 ->
 cosine_search(Ix, Query, K) when is_binary(Query), is_integer(K), K > 0 ->
     cosine_search(Ix, f32_bin_to_list(Query), K).
 
+-spec dump(index(), file:filename()) -> ok | {error, term()}.
+%% @doc Serialise the index to a file.
+%% Format: magic(4) + vsn(1) + dim(4) + n(4) + ids_len(4) + ids + f32_flat + bvec_flat.
+dump(#{table := Tid, dim := Dim}, Path) ->
+    [{?FLAT_KEY, F32Flat, BvecFlat, IdsTuple}] = ets:lookup(Tid, ?FLAT_KEY),
+    N      = tuple_size(IdsTuple),
+    IdsBin = term_to_binary(tuple_to_list(IdsTuple)),
+    IdsLen = byte_size(IdsBin),
+    Header = <<"KVEX", 1:8, Dim:32/big, N:32/big, IdsLen:32/big>>,
+    file:write_file(Path, [Header, IdsBin, F32Flat, BvecFlat]).
+
+-spec load(file:filename()) -> {ok, index()} | {error, term()}.
+%% @doc Restore an index from a file produced by dump/2.
+load(Path) ->
+    case file:read_file(Path) of
+        {ok, <<"KVEX", 1:8, Dim:32/big, N:32/big, IdsLen:32/big, Rest/binary>>} ->
+            <<IdsBin:IdsLen/binary, Payload/binary>> = Rest,
+            Ids      = binary_to_term(IdsBin, [safe]),
+            F32Len   = Dim * 4,
+            BVecLen  = (Dim + 7) div 8,
+            F32Size  = N * F32Len,
+            BVecSize = N * BVecLen,
+            case Payload of
+                <<F32Flat:F32Size/binary, BvecFlat:BVecSize/binary>> ->
+                    Tid = ets:new(kvex, [set, protected]),
+                    rebuild_from_flat(Tid, Ids, F32Flat, BvecFlat, F32Len, BVecLen, 0),
+                    ets:insert(Tid, {?FLAT_KEY, F32Flat, BvecFlat, list_to_tuple(Ids)}),
+                    {ok, #{table => Tid, dim => Dim}};
+                _ ->
+                    {error, bad_format}
+            end;
+        {ok, _} ->
+            {error, bad_format};
+        {error, _} = Err ->
+            Err
+    end.
+
 %%%===================================================================
 %%% Internal
 %%%===================================================================
@@ -175,6 +213,15 @@ build_entries([{Id, Vec0} | Rest], Dim, Pos, EAcc, F32Acc, BvAcc, IdsAcc) ->
         Got ->
             {error, {dim_mismatch, Pos, Dim, Got}}
     end.
+
+rebuild_from_flat(_Tid, [], _F32Flat, _BvecFlat, _F32Len, _BVecLen, _I) -> ok;
+rebuild_from_flat(Tid, [Id | Rest], F32Flat, BvecFlat, F32Len, BVecLen, I) ->
+    F32Off  = I * F32Len,
+    BVOff   = I * BVecLen,
+    <<_:F32Off/binary,  F32:F32Len/binary,  _/binary>> = F32Flat,
+    <<_:BVOff/binary,   BV:BVecLen/binary,  _/binary>> = BvecFlat,
+    ets:insert(Tid, {Id, F32, BV}),
+    rebuild_from_flat(Tid, Rest, F32Flat, BvecFlat, F32Len, BVecLen, I + 1).
 
 to_f32_bin(Vec) when is_binary(Vec) -> Vec;
 to_f32_bin(Vec) when is_list(Vec)   ->

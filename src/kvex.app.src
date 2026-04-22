@@ -1,6 +1,6 @@
 {application, kvex, [
     {description, "Pure Erlang approximate k-NN vector search backed by sied SIMD"},
-    {vsn, "0.2.0"},
+    {vsn, "0.2.1"},
     {registered, [kvex_sup]},
     {mod, {kvex_app, []}},
     {applications, [kernel, stdlib, sied]},

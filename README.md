@@ -26,7 +26,7 @@ Pure Erlang approximate k-nearest-neighbour vector search, powered by
 ## Installation
 
 ```erlang
-{deps, [{kvex, "0.2.0"}]}.
+{deps, [{kvex, "0.2.1"}]}.
 ```
 
 No Rust toolchain required — sied bundles a pre-compiled NIF.
@@ -112,6 +112,23 @@ sied:dot_product_topk_flat/4  →  SIMD dot-product on F32Flat  →  top-K resul
 ```
 
 Default oversample factor: 10× (K=10 → 100 candidates for phase 1).
+
+## Persistence
+
+```erlang
+%% Save index to disk
+ok = kvex:dump(Ix, "/var/data/my_index.kvx"),
+
+%% Restore (no re-quantization — loads flat binaries directly)
+{ok, Ix2} = kvex:load("/var/data/my_index.kvx"),
+
+%% Index is fully functional after load
+ok = kvex:add(Ix2, NewId, NewVec),
+{ok, Results} = kvex:search(Ix2, Query, 10).
+```
+
+File format: `KVEX` magic + version byte + dim + N + serialized IDs + raw f32 flat + raw bvec flat.
+Restore is O(N) pointer setup (sub-binary slices into the flat buffer, no re-quantization).
 
 ## Building from source
 

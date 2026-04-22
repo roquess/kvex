@@ -21,13 +21,18 @@ all() ->
         add_batch_then_search,
         binary_vector_input,
         concurrent_search,
-        gc_releases_native
+        gc_releases_native,
+        dump_and_load,
+        dump_preserves_search,
+        dump_empty_index,
+        add_after_load,
+        load_bad_format
     ].
 
 version_is_binary(_Cfg) ->
     V = kvex:version(),
     true = is_binary(V),
-    <<"0.2.0">> = V.
+    <<"0.2.1">> = V.
 
 new_and_delete(_Cfg) ->
     {ok, Ref} = kvex:new(128),
@@ -132,6 +137,56 @@ concurrent_search(_Cfg) ->
     end) || _ <- lists:seq(1, 20)],
     Results = [receive {P, R} -> R end || P <- Pids],
     lists:foreach(fun(R) -> Expected = R end, Results).
+
+dump_and_load(Cfg) ->
+    Path = filename:join(?config(priv_dir, Cfg), "test.kvx"),
+    {ok, Ix} = kvex:new(128),
+    Batch = [{I, [rand:uniform() || _ <- lists:seq(1, 128)]} || I <- lists:seq(1, 200)],
+    ok  = kvex:add_batch(Ix, Batch),
+    ok  = kvex:dump(Ix, Path),
+    {ok, Ix2} = kvex:load(Path),
+    200 = kvex:size(Ix2),
+    ok  = kvex:delete(Ix),
+    ok  = kvex:delete(Ix2).
+
+dump_preserves_search(Cfg) ->
+    Path = filename:join(?config(priv_dir, Cfg), "search.kvx"),
+    {ok, Ix} = kvex:new(64),
+    Batch = [{I, [rand:uniform() || _ <- lists:seq(1, 64)]} || I <- lists:seq(1, 100)],
+    ok = kvex:add_batch(Ix, Batch),
+    Q  = [rand:uniform() || _ <- lists:seq(1, 64)],
+    {ok, Before} = kvex:search(Ix, Q, 5),
+    ok = kvex:dump(Ix, Path),
+    ok = kvex:delete(Ix),
+    {ok, Ix2} = kvex:load(Path),
+    {ok, After} = kvex:search(Ix2, Q, 5),
+    Before = After,
+    ok = kvex:delete(Ix2).
+
+dump_empty_index(Cfg) ->
+    Path = filename:join(?config(priv_dir, Cfg), "empty.kvx"),
+    {ok, Ix} = kvex:new(64),
+    ok = kvex:dump(Ix, Path),
+    {ok, Ix2} = kvex:load(Path),
+    0  = kvex:size(Ix2),
+    ok = kvex:delete(Ix),
+    ok = kvex:delete(Ix2).
+
+add_after_load(Cfg) ->
+    Path = filename:join(?config(priv_dir, Cfg), "addafter.kvx"),
+    {ok, Ix} = kvex:new(64),
+    ok = kvex:add(Ix, 1, [rand:uniform() || _ <- lists:seq(1, 64)]),
+    ok = kvex:dump(Ix, Path),
+    ok = kvex:delete(Ix),
+    {ok, Ix2} = kvex:load(Path),
+    ok = kvex:add(Ix2, 2, [rand:uniform() || _ <- lists:seq(1, 64)]),
+    2  = kvex:size(Ix2),
+    ok = kvex:delete(Ix2).
+
+load_bad_format(Cfg) ->
+    Path = filename:join(?config(priv_dir, Cfg), "bad.kvx"),
+    ok = file:write_file(Path, <<"not a kvex file">>),
+    {error, bad_format} = kvex:load(Path).
 
 gc_releases_native(_Cfg) ->
     Before = erlang:memory(binary),
