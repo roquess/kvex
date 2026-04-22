@@ -27,7 +27,7 @@ all() ->
 version_is_binary(_Cfg) ->
     V = kvex:version(),
     true = is_binary(V),
-    <<"0.1.0">> = V.
+    <<"0.2.0">> = V.
 
 new_and_delete(_Cfg) ->
     {ok, Ref} = kvex:new(128),
@@ -35,12 +35,13 @@ new_and_delete(_Cfg) ->
     ok = kvex:delete(Ref).
 
 bad_dim_rejected(_Cfg) ->
-    {error, {bad_dim, 7}} = kvex:new(7),
-    {error, {bad_dim, 0}} = kvex:new(0).
+    {error, {bad_dim, 0}}  = kvex:new(0),
+    {error, {bad_dim, -1}} = kvex:new(-1).
 
 bad_bits_rejected(_Cfg) ->
-    {error, {bad_option, bits, 5}} = kvex:new(128, #{bits => 5}),
-    {error, {bad_option, bits, 1}} = kvex:new(128, #{bits => 1}).
+    %% v0.2.0 silently ignores the bits option (no turbovec quantization)
+    {ok, Ix} = kvex:new(128, #{bits => 5}),
+    ok = kvex:delete(Ix).
 
 size_of_empty(_Cfg) ->
     {ok, Ref} = kvex:new(128, #{bits => 2}),

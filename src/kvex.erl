@@ -1,150 +1,185 @@
 %%% @doc
-%%% kvex — approximate k-NN vector search on the BEAM.
+%%% kvex — pure Erlang approximate k-NN vector search on the BEAM.
 %%%
-%%% Backed by the TurboQuant algorithm (Google Research, ICLR 2026) via
-%%% the `turbovec' Rust crate. Vectors are compressed to 2–4 bits per
-%%% coordinate; no training phase, incremental inserts supported.
+%%% Two ETS tables per index:
+%%%   • vec table  — `{Id, F32Bin, BinVec}' per vector (source of truth)
+%%%   • flat cache — `{flat, F32FlatBin, BvecFlatBin, IdsTuple}' rebuilt on
+%%%                  every insert; a single refc-binary per flat, so search
+%%%                  never iterates over individual Erlang terms.
+%%%
+%%% Search path (two sied NIF calls on flat binaries, no Erlang list work):
+%%%   1. `sied:hamming_topk_flat/4'   — SIMD POPCNT on BvecFlat, O(N)+O(K logK)
+%%%   2. `sied:dot_product_topk_flat/4' — SIMD dot-product on F32Flat candidates
 %%%
 %%% == Quick start ==
 %%% ```
 %%% {ok, Ix} = kvex:new(128),
-%%% 0        = kvex:size(Ix),
+%%% Vec      = [rand:uniform() || _ <- lists:seq(1, 128)],
+%%% ok       = kvex:add(Ix, 42, Vec),
+%%% {ok, Rs} = kvex:search(Ix, Vec, 5),
 %%% ok       = kvex:delete(Ix).
 %%% '''
 %%% @end
 -module(kvex).
 
--export([version/0, new/1, new/2, delete/1, size/1, add/3, add_batch/2, search/3]).
+-export([version/0, new/1, new/2, delete/1, size/1,
+         add/3, add_batch/2, search/3,
+         normalize/1, cosine_search/3]).
 
--type index()  :: reference().
--type opts()   :: #{bits => 2 | 3 | 4}.
--type id()     :: non_neg_integer() | binary().
--type vector() :: [float()] | binary().
+-define(OVERSAMPLE, 10).
+
+%% flat cache key stored in the vec table (atom, never clashes with id())
+-define(FLAT_KEY, '$kvex_flat').
+
+-opaque index() :: #{table := ets:tid(), dim := pos_integer()}.
+-type opts()    :: #{bits => 2 | 3 | 4}.
+-type id()      :: non_neg_integer() | binary().
+-type vector()  :: [float()] | binary().
 
 -export_type([index/0, opts/0, id/0, vector/0]).
 
--define(DEFAULT_BITS, 4).
+%%%===================================================================
+%%% Public API
+%%%===================================================================
 
 -spec version() -> binary().
-%% @doc Returns the library version.
-%%
-%% Example:
-%% ```
-%% <<"0.1.0">> = kvex:version().
-%% '''
-version() ->
-    <<"0.1.0">>.
+version() -> <<"0.2.0">>.
 
 -spec new(Dim :: pos_integer()) -> {ok, index()} | {error, term()}.
-%% @doc Equivalent to `new(Dim, #{bits => 4})'.
-%%
-%% Example:
-%% ```
-%% {ok, Ix} = kvex:new(128).
-%% '''
-new(Dim) ->
-    new(Dim, #{}).
+new(Dim) -> new(Dim, #{}).
 
 -spec new(Dim :: pos_integer(), opts()) -> {ok, index()} | {error, term()}.
-%% @doc Creates an empty index of dimension `Dim'.
-%%
-%% `Dim' must be a positive integer multiple of 8. The `bits' option
-%% selects TurboQuant's bit-width per coordinate (2, 3 or 4 — default 4).
-%%
-%% Returns `{ok, Ref}' where `Ref' is an opaque handle, or
-%% `{error, {bad_dim, Dim}}' / `{error, {bad_option, bits, Value}}'.
-%%
-%% Example:
-%% ```
-%% {ok, Ix}               = kvex:new(128, #{bits => 2}),
-%% {error, {bad_dim, 7}}  = kvex:new(7).
-%% '''
-new(Dim, Opts) when is_integer(Dim), is_map(Opts) ->
-    Bits = maps:get(bits, Opts, ?DEFAULT_BITS),
-    kvex_nif:new_index(Dim, Bits).
-
--spec size(index()) -> non_neg_integer().
-%% @doc Returns the number of indexed vectors.
-%%
-%% Example:
-%% ```
-%% {ok, Ix} = kvex:new(128),
-%% 0        = kvex:size(Ix).
-%% '''
-size(Ref) ->
-    kvex_nif:size(Ref).
+%% @doc Creates an empty index for vectors of dimension `Dim'.
+new(Dim, _Opts) when is_integer(Dim), Dim > 0 ->
+    Tid = ets:new(kvex, [set, protected]),
+    ets:insert(Tid, {?FLAT_KEY, <<>>, <<>>, {}}),
+    {ok, #{table => Tid, dim => Dim}};
+new(Dim, _Opts) ->
+    {error, {bad_dim, Dim}}.
 
 -spec delete(index()) -> ok.
-%% @doc Explicitly drops the index reference. Equivalent to letting the
-%% reference be garbage-collected; useful for tests and for predictable
-%% native memory release.
-%%
-%% Example:
-%% ```
-%% {ok, Ix} = kvex:new(128),
-%% ok       = kvex:delete(Ix).
-%% '''
-delete(_Ref) ->
+delete(#{table := Tid}) ->
+    ets:delete(Tid),
     ok.
 
+-spec size(index()) -> non_neg_integer().
+size(#{table := Tid}) ->
+    ets:info(Tid, size) - 1.   % subtract the flat_cache sentinel
+
 -spec add(index(), id(), vector()) -> ok | {error, term()}.
-%% @doc Inserts a single vector under the given id.
-%%
-%% Ids may be non-negative integers or binaries (e.g. UUIDs). Vectors
-%% may be passed as a list of floats or as a little-endian f32 binary
-%% of length `4 * Dim'.
-%%
-%% Returns `ok' on success, or `{error, {dim_mismatch, Expected, Got}}'.
-%%
-%% Example:
-%% ```
-%% {ok, Ix} = kvex:new(128),
-%% Vec      = [rand:uniform() || _ <- lists:seq(1, 128)],
-%% ok       = kvex:add(Ix, 42, Vec).
-%% '''
-add(Ref, Id, Vec) when is_list(Vec); is_binary(Vec) ->
-    kvex_nif:add_vec(Ref, Id, Vec).
+%% @doc Inserts a single vector. Rebuilds the flat cache — O(N) copy.
+add(#{table := Tid, dim := Dim}, Id, Vec0) ->
+    F32Bin = to_f32_bin(Vec0),
+    case byte_size(F32Bin) div 4 of
+        Dim ->
+            {ok, BinVec} = sied:to_binary_f32_bin(F32Bin),
+            ets:insert(Tid, {Id, F32Bin, BinVec}),
+            rebuild_flat(Tid),
+            ok;
+        Got ->
+            {error, {dim_mismatch, Dim, Got}}
+    end.
 
 -spec add_batch(index(), [{id(), vector()}]) -> ok | {error, term()}.
-%% @doc Inserts a list of `{Id, Vector}' pairs atomically.
-%%
-%% If any vector has the wrong dimension the whole batch is rejected
-%% with `{error, {dim_mismatch, Position, Expected, Got}}' where
-%% `Position' is the 0-based index of the offending entry.
-%%
-%% Runs on a dirty CPU scheduler — safe to call with large batches
-%% without blocking a BEAM scheduler thread.
-%%
-%% Example:
-%% ```
-%% {ok, Ix} = kvex:new(128),
-%% Pairs    = [{I, [rand:uniform() || _ <- lists:seq(1, 128)]}
-%%             || I <- lists:seq(1, 10000)],
-%% ok       = kvex:add_batch(Ix, Pairs).
-%% '''
-add_batch(Ref, Pairs) when is_list(Pairs) ->
-    kvex_nif:add_batch(Ref, Pairs).
+%% @doc Inserts vectors in batch. Builds the flat binary incrementally — O(batch).
+add_batch(#{table := Tid, dim := Dim}, Pairs) when is_list(Pairs) ->
+    case build_entries(Pairs, Dim, 0, [], [], [], []) of
+        {ok, Entries, F32New, BvecNew, IdsNew} ->
+            ets:insert(Tid, Entries),
+            [{?FLAT_KEY, F32Old, BvecOld, IdsOldT}] = ets:lookup(Tid, ?FLAT_KEY),
+            IdsOld   = tuple_to_list(IdsOldT),
+            F32Flat  = <<F32Old/binary,  F32New/binary>>,
+            BvecFlat = <<BvecOld/binary, BvecNew/binary>>,
+            IdsTuple = list_to_tuple(IdsOld ++ IdsNew),
+            ets:insert(Tid, {?FLAT_KEY, F32Flat, BvecFlat, IdsTuple}),
+            ok;
+        {error, _} = Err ->
+            Err
+    end.
 
 -spec search(index(), Query :: vector(), K :: pos_integer()) ->
         {ok, [{id(), Score :: float()}]} | {error, term()}.
-%% @doc Returns up to `K' most-similar vectors to `Query', sorted
-%% descending by score (higher = more similar).
-%%
-%% Scores are raw TurboQuant similarity scores — monotone with inner
-%% product on the rotated / quantized representation. They are
-%% comparable within a single index but not calibrated to any specific
-%% metric. To get cosine similarity, L2-normalize vectors before `add'
-%% and before `search'.
-%%
-%% Errors: `{error, empty_index}' if the index has no vectors,
-%% `{error, {dim_mismatch, Expected, Got}}' on size mismatch.
-%%
-%% Example:
-%% ```
-%% {ok, Ix}      = kvex:new(128),
-%% ok            = kvex:add(Ix, 1, Vec),
-%% {ok, Results} = kvex:search(Ix, Query, 10).
-%% '''
-search(Ref, Query, K) when (is_list(Query) orelse is_binary(Query)),
-                           is_integer(K), K > 0 ->
-    kvex_nif:search_vec(Ref, Query, K).
+search(#{table := Tid, dim := Dim}, Query0, K)
+        when is_integer(K), K > 0 ->
+    QBin = to_f32_bin(Query0),
+    case byte_size(QBin) div 4 of
+        Dim ->
+            [{?FLAT_KEY, F32Flat, BvecFlat, IdsTuple}] = ets:lookup(Tid, ?FLAT_KEY),
+            N = tuple_size(IdsTuple),
+            case N of
+                0 -> {error, empty_index};
+                _ -> do_search(QBin, F32Flat, BvecFlat, IdsTuple, K, N)
+            end;
+        Got ->
+            {error, {dim_mismatch, Dim, Got}}
+    end.
+
+-spec normalize(vector()) -> {ok, [float()]} | {error, term()}.
+normalize(Vec) when is_list(Vec)   -> sied:l2_normalize_f32(Vec);
+normalize(Vec) when is_binary(Vec) -> sied:l2_normalize_f32(f32_bin_to_list(Vec)).
+
+-spec cosine_search(index(), Query :: vector(), K :: pos_integer()) ->
+        {ok, [{id(), Score :: float()}]} | {error, term()}.
+cosine_search(Ix, Query, K) when is_list(Query), is_integer(K), K > 0 ->
+    case sied:l2_normalize_f32(Query) of
+        {ok, NormQ} -> search(Ix, NormQ, K);
+        Error       -> Error
+    end;
+cosine_search(Ix, Query, K) when is_binary(Query), is_integer(K), K > 0 ->
+    cosine_search(Ix, f32_bin_to_list(Query), K).
+
+%%%===================================================================
+%%% Internal
+%%%===================================================================
+
+do_search(QBin, F32Flat, BvecFlat, IdsTuple, K, N) ->
+    {ok, QQuantBin} = sied:to_binary_f32_bin(QBin),
+    VecBLen   = byte_size(QQuantBin),
+    VecF32Len = byte_size(QBin),
+    CandCount = min(K * ?OVERSAMPLE, N),
+    %% Phase 1 — SIMD POPCNT on flat binary, returns top-CandCount indices
+    {ok, CandIdxs} = sied:hamming_topk_flat(QQuantBin, BvecFlat, VecBLen, CandCount),
+    %% Phase 2 — SIMD dot-product on flat f32, returns [{Score, Idx}] sorted desc
+    {ok, Scored} = sied:dot_product_topk_flat(QBin, F32Flat, VecF32Len, CandIdxs),
+    {ok, [{element(Idx + 1, IdsTuple), Score}
+          || {Score, Idx} <- lists:sublist(Scored, K)]}.
+
+%% Rebuild flat cache from all records in the vec table.
+%% Called after single add/3 — O(N) scan + binary concat.
+rebuild_flat(Tid) ->
+    All = ets:select(Tid, [{{'$1','$2','$3'}, [{'/=','$1',{const,?FLAT_KEY}}], [{{'$1','$2','$3'}}]}]),
+    {F32Flat, BvecFlat, Ids} = lists:foldl(
+        fun({Id, F32, BV}, {F, B, Is}) ->
+            {<<F/binary, F32/binary>>, <<B/binary, BV/binary>>, [Id | Is]}
+        end,
+        {<<>>, <<>>, []},
+        All
+    ),
+    ets:insert(Tid, {?FLAT_KEY, F32Flat, BvecFlat, list_to_tuple(lists:reverse(Ids))}).
+
+build_entries([], _Dim, _Pos, EAcc, F32Acc, BvAcc, IdsAcc) ->
+    {ok, lists:reverse(EAcc),
+     iolist_to_binary(lists:reverse(F32Acc)),
+     iolist_to_binary(lists:reverse(BvAcc)),
+     lists:reverse(IdsAcc)};
+build_entries([{Id, Vec0} | Rest], Dim, Pos, EAcc, F32Acc, BvAcc, IdsAcc) ->
+    F32Bin = to_f32_bin(Vec0),
+    case byte_size(F32Bin) div 4 of
+        Dim ->
+            {ok, BinVec} = sied:to_binary_f32_bin(F32Bin),
+            build_entries(Rest, Dim, Pos + 1,
+                [{Id, F32Bin, BinVec} | EAcc],
+                [F32Bin  | F32Acc],
+                [BinVec  | BvAcc],
+                [Id      | IdsAcc]);
+        Got ->
+            {error, {dim_mismatch, Pos, Dim, Got}}
+    end.
+
+to_f32_bin(Vec) when is_binary(Vec) -> Vec;
+to_f32_bin(Vec) when is_list(Vec)   ->
+    << <<F:32/float-little>> || F <- Vec >>.
+
+f32_bin_to_list(<<>>) -> [];
+f32_bin_to_list(<<F:32/float-little, Rest/binary>>) ->
+    [F | f32_bin_to_list(Rest)].
