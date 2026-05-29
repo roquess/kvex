@@ -1,9 +1,9 @@
 {application, kvex, [
-    {description, "Approximate k-NN vector search with bundled sied SIMD NIF"},
-    {vsn, "0.2.6"},
+    {description, "Pure Erlang approximate k-NN vector search backed by sied SIMD"},
+    {vsn, "0.2.7"},
     {registered, [kvex_sup]},
     {mod, {kvex_app, []}},
-    {applications, [kernel, stdlib]},
+    {applications, [kernel, stdlib, sied]},
     {env, []},
     {modules, []},
 
@@ -12,14 +12,10 @@
     {maintainers, ["Steve Roques <steve@roques.me>"]},
 
     {files, [
-        "src/**",
-        "native/sied/src/lib.rs",
-        "native/sied/Cargo.toml",
-        "native/sied/Cargo.lock",
-        "priv/sied.dll",
-        "priv/sied.so",
-        "priv/sied.dylib",
-        "Makefile",
+        "src/kvex.erl",
+        "src/kvex_app.erl",
+        "src/kvex_sup.erl",
+        "src/kvex.app.src",
         "rebar.config",
         "LICENSE",
         "README.md",
