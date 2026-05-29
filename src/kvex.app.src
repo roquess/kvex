@@ -13,7 +13,9 @@
 
     {files, [
         "src/**",
-        "native/**",
+        "native/sied/src/lib.rs",
+        "native/sied/Cargo.toml",
+        "native/sied/Cargo.lock",
         "priv/sied.dll",
         "priv/sied.so",
         "priv/sied.dylib",
