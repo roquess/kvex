@@ -11,12 +11,10 @@ crash.dump
 erl_crash.dump
 *.crashdump
 rebar3.crashdump
-*.so
-*.dll
-*.dll.exp
-*.dll.lib
-*.dylib
 *.pdb
-priv/
+priv/*
+!priv/sied.dll
+!priv/sied.so
+!priv/sied.dylib
 src/cargo.hrl
 NOTES.md
