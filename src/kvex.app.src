@@ -1,6 +1,6 @@
 {application, kvex, [
     {description, "Approximate k-NN vector search with bundled sied SIMD NIF"},
-    {vsn, "0.2.4"},
+    {vsn, "0.2.5"},
     {registered, [kvex_sup]},
     {mod, {kvex_app, []}},
     {applications, [kernel, stdlib]},
