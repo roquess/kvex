@@ -32,7 +32,7 @@ all() ->
 version_is_binary(_Cfg) ->
     V = kvex:version(),
     true = is_binary(V),
-    <<"0.2.1">> = V.
+    <<"0.2.10">> = V.
 
 new_and_delete(_Cfg) ->
     {ok, Ref} = kvex:new(128),

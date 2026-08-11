@@ -44,7 +44,7 @@
 %%%===================================================================
 
 -spec version() -> binary().
-version() -> <<"0.2.1">>.
+version() -> <<"0.2.10">>.
 
 -spec new(Dim :: pos_integer()) -> {ok, index()} | {error, term()}.
 new(Dim) -> new(Dim, #{}).
